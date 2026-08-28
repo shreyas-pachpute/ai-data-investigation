@@ -1,5 +1,44 @@
 # AI Data Investigation & Root-Cause Agent
 
+## Implementation Status (MVP)
+
+The design below is implemented under `src/investigator/`. What exists:
+
+- A synthetic SQLite warehouse (`orders`, `pipeline_runs`, `schema_changes`, `metrics_catalog`) with 15 months of daily e-commerce data and four ground-truth-labeled incidents injected (a pipeline failure, a genuine targeted business spike, a broad-based seasonal event, and a metric-definition change).
+- Deterministic anomaly detection (same-weekday z-score — not an LLM step, fully unit-tested).
+- A real cyclic investigation agent (hand-rolled bounded loop, not a fixed pipeline) using Gemini (`gemini-2.5-flash-lite`): hypothesize → propose a SQL query → execute it through a guardrailed read-only tool → evaluate the verdict → refine → repeat, until confident or budget-exhausted.
+- A guardrailed SQL tool: single-`SELECT`-only, keyword-blocklisted, table-whitelisted, row-capped, wall-clock query timeout.
+- An automated evidence-grounding validator (every citation in the final report must reference a query that actually ran).
+- A 4-incident regression/eval suite measuring root-cause accuracy, confidence calibration, query efficiency, and cost.
+
+### Setup
+
+```bash
+python -m venv .venv
+./.venv/Scripts/activate         # or source .venv/bin/activate on macOS/Linux
+pip install -e .
+# add GEMINI_API_KEY=... to a local .env (gitignored)
+```
+
+### Usage
+
+```bash
+python -m investigator.cli seed                          # build the synthetic warehouse
+python -m investigator.cli detect                        # deterministic anomaly detection, no LLM calls
+python -m investigator.cli investigate --date 2025-04-15  # run one investigation
+python -m investigator.cli eval                          # full 4-incident regression suite
+python -m investigator.cli eval --only genuine_spike      # run a subset (useful under a tight API quota)
+pytest tests/                                             # guardrail/detection/grounding tests, zero API cost
+```
+
+### Verified so far
+
+Running on a free-tier Gemini key (20 requests/day for `gemini-2.5-flash-lite`), so the full eval suite is being run incrementally across days rather than in one shot:
+
+- All 22 deterministic tests pass.
+- `pipeline_failure` incident (2025-04-15): agent correctly concluded `data_quality_issue` at high confidence, citing the NA-region revenue collapse and the failed ingestion run, in 4 LLM calls; evidence grounding passed.
+- Remaining incidents (`genuine_spike`, `seasonal_black_friday`, `definitional_change`) pending next quota reset.
+
 ## 1. One-Sentence Explanation
 
 This is an AI system that investigates "why did this number change" questions the way a good data analyst would — forming a hypothesis, checking it against real data, and either confirming or ruling it out — instead of guessing an answer.
